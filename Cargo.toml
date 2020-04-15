@@ -1,0 +1,17 @@
+[package]
+name = "bgdb"
+version = "0.1.0"
+authors = ["Brian Gavin <bgavin1996@gmail.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+rustyline = "6.1"
+libc = {git = "https://github.com/rust-lang/libc"}
+
+[dependencies.iced-x86]
+version = "1.0.1"
+default-features = false
+# See below for all features
+features = ["std", "decoder", "intel"]
