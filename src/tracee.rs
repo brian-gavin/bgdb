@@ -3,14 +3,20 @@ use libc::{
     c_void, user_regs_struct, PTRACE_CONT, PTRACE_GETREGS, PTRACE_POKETEXT, PTRACE_SETREGS,
     PTRACE_SINGLESTEP, PTRACE_TRACEME,
 };
-use std::{io, os::unix::process::CommandExt, process, ptr};
+use std::{collections::HashMap, io, os::unix::process::CommandExt, process, ptr};
 
 pub const INT3: usize = 0xcc;
+
+pub struct Breakpoint {
+    pub original_data: usize,
+    pub number: usize,
+}
 
 pub struct Tracee {
     _program_name: String,
     child: process::Child,
     regs_cache: Option<user_regs_struct>,
+    breakpoints: HashMap<usize, Breakpoint>,
 }
 
 impl Tracee {
@@ -19,6 +25,7 @@ impl Tracee {
             _program_name: program_name.to_string(),
             child: start_child(program_name)?,
             regs_cache: None,
+            breakpoints: HashMap::new(),
         };
         Ok(tracee)
     }
@@ -56,8 +63,16 @@ impl Tracee {
 
     pub fn insert_breakpoint(&mut self, addr: usize) {
         // insert the int3 instsruction at the addr
-        let orig_data = instr_at(self.pid(), addr) as usize;
-        let int3_data = (orig_data & LSB_MASK) | INT3;
+        let original_data = instr_at(self.pid(), addr) as usize;
+        let int3_data = (original_data & LSB_MASK) | INT3;
+
+        self.breakpoints.insert(
+            addr,
+            Breakpoint {
+                original_data,
+                number: self.breakpoints.len() + 1,
+            },
+        );
 
         ptrace(
             PTRACE_POKETEXT,
@@ -66,18 +81,21 @@ impl Tracee {
             int3_data as *mut c_void,
         )
         .expect("ptrace(POKETEXT) failed.");
+    }
 
-        // continue and stop at the breakpoint
-        self.cont();
-        let _status = waitpid(self.pid(), 0).expect("waitpid failed.");
-
+    pub fn restore_breakpoint(&mut self) {
         // restore pre-breakpoint state
         self.regs_mut().rip -= 1;
+        let addr = self.regs().rip;
+        let breakpoint = self.breakpoints.get(&(addr as usize)).expect(&format!(
+            "restoring breakpoint of non-breakpoint addr {:x}",
+            addr
+        ));
         ptrace(
             PTRACE_POKETEXT,
             self.pid(),
             addr as *mut c_void,
-            orig_data as *mut c_void,
+            breakpoint.original_data as *mut c_void,
         )
         .expect("ptrace(POKETEXT) failed.");
         ptrace(

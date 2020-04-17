@@ -1,4 +1,8 @@
-use crate::Tracee;
+use crate::{
+    wrappers::{waitpid, WIFSTOPPED, WSTOPSIG},
+    Tracee, WaitStatus,
+};
+use libc::SIGTRAP;
 
 #[derive(Debug, Copy, Clone)]
 pub enum Command {
@@ -15,12 +19,12 @@ pub fn parse_command(line: &str) -> Result<Command, String> {
     }
     let cmd_str = split[0];
     if cmd_str == "break" {
-        split
+        let arg = split
             .get(1)
-            .ok_or(String::from("'break' command needs address"))?
-            .parse::<usize>()
+            .ok_or(String::from("'break' command needs address"))?;
+        usize::from_str_radix(&arg, 16)
             .map(|n| Command::BreakAddr(n))
-            .map_err(|_| String::from("Could not parse int from address."))
+            .map_err(|e| format!("{}", e))
     } else if cmd_str == "next" {
         Ok(Command::Next)
     } else if cmd_str == "cont" {
@@ -30,15 +34,28 @@ pub fn parse_command(line: &str) -> Result<Command, String> {
     }
 }
 
-pub fn eval_command(tracee: &mut Tracee, cmd: Command) {
+pub fn eval_command(tracee: &mut Tracee, cmd: Command) -> Option<WaitStatus> {
     use Command::*;
     dbg!(cmd);
     match cmd {
-        Noop => (),
-        Next => tracee.single_step(),
-        Cont => tracee.cont(),
+        Noop => None,
+        Next => {
+            tracee.single_step();
+            let status = waitpid(tracee.pid(), 0).expect("waitpid failed");
+            Some(WaitStatus(status))
+        }
+        Cont => {
+            tracee.cont();
+            let status = waitpid(tracee.pid(), 0).expect("waitpid failed");
+            if WIFSTOPPED(status) && WSTOPSIG(status) == SIGTRAP {
+                println!("Stopped at a breakpoint!");
+                tracee.restore_breakpoint();
+            }
+            Some(WaitStatus(status))
+        }
         BreakAddr(addr) => {
             tracee.insert_breakpoint(addr);
+            None
         }
     }
 }

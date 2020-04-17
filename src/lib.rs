@@ -26,22 +26,31 @@ use arch::*;
 use tracee::Tracee;
 use wrappers::*;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct WaitStatus(i32);
+
 pub fn run(mut tracee: Tracee) {
     let mut rl = Editor::<()>::new();
     dbg!(BITNESS);
+    let mut wait_status = None;
+    waitpid(tracee.pid(), 0).expect("waitpid failed");
     loop {
-        let status = waitpid(tracee.pid(), 0).expect("waitpid failed");
-        if WIFEXITED(status) {
-            println!("Child process exited.");
-            break;
+        if let Some(WaitStatus(status)) = wait_status {
+            if WIFEXITED(status) {
+                println!("Child process exited.");
+                break;
+            }
         }
         decode_and_print_cur_instr(tracee.pid(), tracee.regs());
         let readline = rl.readline("bgdb> ");
         match readline {
             Ok(line) => match repl::parse_command(&line) {
-                Ok(cmd) => repl::eval_command(&mut tracee, cmd),
+                Ok(cmd) => {
+                    wait_status = repl::eval_command(&mut tracee, cmd);
+                }
                 Err(e) => {
                     eprintln!("{}", e);
+                    wait_status = None;
                     continue;
                 }
             },
