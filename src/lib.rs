@@ -1,10 +1,14 @@
 use iced_x86::{Decoder, DecoderOptions, Formatter, Instruction, IntelFormatter};
-use libc::{c_long, c_void, user_regs_struct, PTRACE_PEEKTEXT};
-use rustyline::{error::ReadlineError, Editor};
-use std::{
-    io::{self, prelude::*},
-    ptr,
+use libc::{c_long, user_regs_struct};
+use nix::{
+    sys::{
+        ptrace,
+        wait::{waitpid, WaitStatus},
+    },
+    unistd::Pid,
 };
+use rustyline::{error::ReadlineError, Editor};
+use std::io::{self, prelude::*};
 
 #[cfg(target_arch = "x86_64")]
 mod arch {
@@ -20,23 +24,18 @@ mod arch {
 
 mod repl;
 pub mod tracee;
-mod wrappers;
 
 use arch::*;
 use tracee::Tracee;
-use wrappers::*;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct WaitStatus(i32);
 
 pub fn run(mut tracee: Tracee) {
     let mut rl = Editor::<()>::new();
     dbg!(BITNESS);
     let mut wait_status = None;
-    waitpid(tracee.pid(), 0).expect("waitpid failed");
+    waitpid(tracee.pid(), None).expect("waitpid failed");
     loop {
-        if let Some(WaitStatus(status)) = wait_status {
-            if WIFEXITED(status) {
+        if let Some(status) = wait_status {
+            if let WaitStatus::Exited(_, _) = status {
                 println!("Child process exited.");
                 break;
             }
@@ -54,27 +53,25 @@ pub fn run(mut tracee: Tracee) {
                     continue;
                 }
             },
-            Err(ReadlineError::Eof) => break,
+            Err(ReadlineError::Eof) => {
+                tracee.kill().expect("Could not kill child");
+                break;
+            }
             Err(err) => panic!(err),
         }
     }
 }
 
-pub(crate) fn instr_at(pid: u32, addr: usize) -> c_long {
+pub(crate) fn instr_at(pid: Pid, addr: usize) -> c_long {
     dbg!(pid, addr);
-    ptrace(PTRACE_PEEKTEXT, pid, addr as *mut c_void, ptr::null_mut())
-        .expect("ptrace(PEEKTEXT) failed")
+    ptrace::read(pid, addr as _).expect("ptrace(PEEKTEXT) failed")
 }
 
-pub(crate) fn as_mut_ptr_cvoid<T>(r: &mut T) -> *mut c_void {
-    r as *mut _ as *mut c_void
-}
-
-fn cur_instr(pid: u32, regs: &user_regs_struct) -> c_long {
+fn cur_instr(pid: Pid, regs: &user_regs_struct) -> c_long {
     instr_at(pid, regs.rip as usize)
 }
 
-fn decode_cur_instr(pid: u32, regs: &user_regs_struct) -> String {
+fn decode_cur_instr(pid: Pid, regs: &user_regs_struct) -> String {
     let mut output = String::new();
     let instr = cur_instr(pid, regs);
     let instr_bytes = instr.to_le_bytes();
@@ -89,7 +86,7 @@ fn decode_cur_instr(pid: u32, regs: &user_regs_struct) -> String {
     output
 }
 
-fn decode_and_print_cur_instr(pid: u32, regs: &user_regs_struct) {
+fn decode_and_print_cur_instr(pid: Pid, regs: &user_regs_struct) {
     dbg!(regs.rip);
     let output = decode_cur_instr(pid, regs);
     let instr = cur_instr(pid, regs);

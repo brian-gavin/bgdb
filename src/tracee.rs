@@ -1,9 +1,7 @@
-use crate::{arch::*, as_mut_ptr_cvoid, instr_at, wrappers::*};
-use libc::{
-    c_void, user_regs_struct, PTRACE_CONT, PTRACE_GETREGS, PTRACE_POKETEXT, PTRACE_SETREGS,
-    PTRACE_SINGLESTEP, PTRACE_TRACEME,
-};
-use std::{collections::HashMap, io, os::unix::process::CommandExt, process, ptr};
+use crate::{arch::*, instr_at};
+use libc::user_regs_struct;
+use nix::{sys::ptrace, unistd::Pid};
+use std::{collections::HashMap, io, os::unix::process::CommandExt, process};
 
 pub const INT3: usize = 0xcc;
 
@@ -30,8 +28,12 @@ impl Tracee {
         Ok(tracee)
     }
 
-    pub fn pid(&self) -> u32 {
-        self.child.id()
+    pub fn pid(&self) -> Pid {
+        Pid::from_raw(self.child.id() as _)
+    }
+
+    pub fn kill(&mut self) -> io::Result<()> {
+        self.child.kill()
     }
 
     pub fn regs(&mut self) -> &user_regs_struct {
@@ -44,20 +46,13 @@ impl Tracee {
     }
 
     pub fn single_step(&mut self) {
-        ptrace(
-            PTRACE_SINGLESTEP,
-            self.pid(),
-            ptr::null_mut(),
-            ptr::null_mut(),
-        )
-        .expect("ptrace(SINGLE_STEP) failed.");
+        ptrace::step(self.pid(), None).expect("ptrace(SINGLE_STEP) failed.");
         // invalidate the regs cache since `rip` was advanced
         self.regs_cache = None;
     }
 
     pub fn cont(&mut self) {
-        ptrace(PTRACE_CONT, self.pid(), ptr::null_mut(), ptr::null_mut())
-            .expect("ptrace(CONT) failed.");
+        ptrace::cont(self.pid(), None).expect("ptrace(CONT) failed.");
         self.regs_cache = None;
     }
 
@@ -74,13 +69,7 @@ impl Tracee {
             },
         );
 
-        ptrace(
-            PTRACE_POKETEXT,
-            self.pid(),
-            addr as *mut c_void,
-            int3_data as *mut c_void,
-        )
-        .expect("ptrace(POKETEXT) failed.");
+        ptrace::write(self.pid(), addr as _, int3_data as _).expect("ptrace(POKETEXT) failed.");
     }
 
     pub fn restore_breakpoint(&mut self) {
@@ -91,20 +80,9 @@ impl Tracee {
             "restoring breakpoint of non-breakpoint addr {:x}",
             addr
         ));
-        ptrace(
-            PTRACE_POKETEXT,
-            self.pid(),
-            addr as *mut c_void,
-            breakpoint.original_data as *mut c_void,
-        )
-        .expect("ptrace(POKETEXT) failed.");
-        ptrace(
-            PTRACE_SETREGS,
-            self.pid(),
-            ptr::null_mut(),
-            as_mut_ptr_cvoid(self.regs_mut()),
-        )
-        .expect("ptrace(SETREGS) failed.");
+        ptrace::write(self.pid(), addr as _, breakpoint.original_data as _)
+            .expect("ptrace(POKETEXT) failed.");
+        ptrace::setregs(self.pid(), self.regs().clone()).expect("ptrace(SETREGS) failed.");
     }
 
     /// for internal modification of the registers directly and usage in `PTRACE_SETREGS` calls,
@@ -119,14 +97,7 @@ impl Tracee {
     }
 
     fn populate_regs(&mut self) {
-        let mut regs = default_user_regs_struct();
-        ptrace(
-            PTRACE_GETREGS,
-            self.child.id(),
-            ptr::null_mut(),
-            as_mut_ptr_cvoid(&mut regs),
-        )
-        .expect("ptrace(GETREGS) failed.");
+        let regs = ptrace::getregs(self.pid()).expect("ptrace(GETREGS) failed.");
         dbg!(regs.rip);
         self.regs_cache = Some(regs);
     }
@@ -135,7 +106,7 @@ impl Tracee {
 fn start_child(program_name: &str) -> io::Result<process::Child> {
     let mut child = process::Command::new(program_name);
     let pre_exec = || {
-        ptrace(PTRACE_TRACEME, 0, ptr::null_mut(), ptr::null_mut())?;
+        ptrace::traceme().expect("ptrace(TRACEME) failed.");
         Ok(())
     };
     unsafe {

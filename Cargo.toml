@@ -8,7 +8,8 @@ edition = "2018"
 
 [dependencies]
 rustyline = "6.1"
-libc = {git = "https://github.com/rust-lang/libc"}
+nix = "0.17"
+libc = "0.2"
 
 [dependencies.iced-x86]
 version = "1.0.1"

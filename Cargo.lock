@@ -29,7 +29,8 @@ name = "bgdb"
 version = "0.1.0"
 dependencies = [
  "iced-x86",
- "libc 0.2.68 (git+https://github.com/rust-lang/libc)",
+ "libc",
+ "nix",
  "rustyline",
 ]
 
@@ -96,7 +97,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "afa0b23de8fd801745c471deffa6e12d248f962c9fd4b4c33787b055599bde7b"
 dependencies = [
  "cfg-if",
- "libc 0.2.68 (registry+https://github.com/rust-lang/crates.io-index)",
+ "libc",
  "redox_users",
  "winapi",
 ]
@@ -108,7 +109,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7abc8dd8451921606d809ba32e95b6111925cd2906060d2dcc29c070220503eb"
 dependencies = [
  "cfg-if",
- "libc 0.2.68 (registry+https://github.com/rust-lang/crates.io-index)",
+ "libc",
  "wasi",
 ]
 
@@ -131,14 +132,9 @@ checksum = "e2abad23fbc42b3700f2f279844dc832adb2b2eb069b2df918f455c4e18cc646"
 
 [[package]]
 name = "libc"
-version = "0.2.68"
-source = "git+https://github.com/rust-lang/libc#a1c40924ae8aed3156121fe21be4fe698b368711"
-
-[[package]]
-name = "libc"
-version = "0.2.68"
+version = "0.2.72"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dea0c0405123bba743ee3f91f49b1c7cfb684eef0da0a50110f758ccf24cdff0"
+checksum = "a9f8082297d534141b30c8d39e9b1773713ab50fdbe4ff30f750d063b3bfd701"
 
 [[package]]
 name = "log"
@@ -164,7 +160,7 @@ dependencies = [
  "bitflags",
  "cc",
  "cfg-if",
- "libc 0.2.68 (registry+https://github.com/rust-lang/crates.io-index)",
+ "libc",
  "void",
 ]
 
@@ -214,7 +210,7 @@ checksum = "6155a1169c281a8b75ee943a83eef0e2bb63aff057688c2111be319e51fc9f63"
 dependencies = [
  "cfg-if",
  "dirs",
- "libc 0.2.68 (registry+https://github.com/rust-lang/crates.io-index)",
+ "libc",
  "log",
  "memchr",
  "nix",

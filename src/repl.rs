@@ -1,8 +1,6 @@
-use crate::{
-    wrappers::{waitpid, WIFSTOPPED, WSTOPSIG},
-    Tracee, WaitStatus,
-};
-use libc::SIGTRAP;
+use crate::Tracee;
+use nix::sys::signal::Signal;
+use nix::sys::wait::{waitpid, WaitStatus};
 
 #[derive(Debug, Copy, Clone)]
 pub enum Command {
@@ -41,17 +39,17 @@ pub fn eval_command(tracee: &mut Tracee, cmd: Command) -> Option<WaitStatus> {
         Noop => None,
         Next => {
             tracee.single_step();
-            let status = waitpid(tracee.pid(), 0).expect("waitpid failed");
-            Some(WaitStatus(status))
+            let status = waitpid(tracee.pid(), None).expect("waitpid failed");
+            Some(status)
         }
         Cont => {
             tracee.cont();
-            let status = waitpid(tracee.pid(), 0).expect("waitpid failed");
-            if WIFSTOPPED(status) && WSTOPSIG(status) == SIGTRAP {
+            let status = waitpid(tracee.pid(), None).expect("waitpid failed");
+            if let WaitStatus::Stopped(_, Signal::SIGTRAP) = status {
                 println!("Stopped at a breakpoint!");
                 tracee.restore_breakpoint();
             }
-            Some(WaitStatus(status))
+            Some(status)
         }
         BreakAddr(addr) => {
             tracee.insert_breakpoint(addr);
