@@ -1,12 +1,5 @@
 use iced_x86::{Decoder, DecoderOptions, Formatter, Instruction, IntelFormatter};
-use libc::{c_long, user_regs_struct};
-use nix::{
-    sys::{
-        ptrace,
-        wait::{waitpid, WaitStatus},
-    },
-    unistd::Pid,
-};
+use nix::sys::wait::{waitpid, WaitStatus};
 use rustyline::{error::ReadlineError, Editor};
 use std::io::{self, prelude::*};
 
@@ -40,7 +33,8 @@ pub fn run(mut tracee: Tracee) {
                 break;
             }
         }
-        decode_and_print_cur_instr(tracee.pid(), tracee.regs());
+        let cur_instr = tracee.instr_at(tracee.regs().rip as _);
+        decode_and_print_instr(tracee.regs().rip, cur_instr);
         let readline = rl.readline("bgdb> ");
         match readline {
             Ok(line) => match repl::parse_command(&line) {
@@ -57,39 +51,27 @@ pub fn run(mut tracee: Tracee) {
                 tracee.kill().expect("Could not kill child");
                 break;
             }
-            Err(err) => panic!(err),
+            Err(err) => panic!("{}", err),
         }
     }
 }
 
-pub(crate) fn instr_at(pid: Pid, addr: usize) -> c_long {
-    dbg!(pid, addr);
-    ptrace::read(pid, addr as _).expect("ptrace(PEEKTEXT) failed")
-}
-
-fn cur_instr(pid: Pid, regs: &user_regs_struct) -> c_long {
-    instr_at(pid, regs.rip as usize)
-}
-
-fn decode_cur_instr(pid: Pid, regs: &user_regs_struct) -> String {
+fn decode_instr(rip: u64, instr: usize) -> String {
     let mut output = String::new();
-    let instr = cur_instr(pid, regs);
-    let instr_bytes = instr.to_le_bytes();
-    let mut decoder = Decoder::new(BITNESS, &instr_bytes, DecoderOptions::NONE);
+    let instr = instr.to_le_bytes(); // Decoder borrows the slice for its lifetime
+    let mut decoder = Decoder::new(BITNESS, &instr, DecoderOptions::NONE);
     let mut formatter = IntelFormatter::new();
     let mut decoded_instr = Instruction::new();
 
-    decoder.set_ip(regs.rip);
+    decoder.set_ip(rip);
     decoder.decode_out(&mut decoded_instr);
     formatter.format(&decoded_instr, &mut output);
 
     output
 }
 
-fn decode_and_print_cur_instr(pid: Pid, regs: &user_regs_struct) {
-    dbg!(regs.rip);
-    let output = decode_cur_instr(pid, regs);
-    let instr = cur_instr(pid, regs);
-    println!("{:#016x}:    {:#016x}.    {}", regs.rip, instr, output);
+fn decode_and_print_instr(rip: u64, instr: usize) {
+    let output = decode_instr(rip, instr);
+    println!("{:#016x}:    {:#016x}.    {}", rip, instr, output);
     io::stdout().flush().expect("Error flushing stdout");
 }
