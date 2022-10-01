@@ -8,11 +8,11 @@ edition = "2018"
 
 [dependencies]
 rustyline = "6.1"
-nix = "0.17"
+nix = "0.25"
 libc = "0.2"
 
 [dependencies.iced-x86]
-version = "1.0.1"
+version = "1.0"
 default-features = false
 # See below for all features
 features = ["std", "decoder", "intel"]
