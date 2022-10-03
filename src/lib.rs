@@ -22,7 +22,7 @@ use arch::*;
 use tracee::Tracee;
 
 pub fn run(mut tracee: Tracee) {
-    let mut rl = Editor::<()>::new();
+    let mut rl = Editor::<()>::new().unwrap();
     dbg!(BITNESS);
     let mut wait_status = None;
     waitpid(tracee.pid(), None).expect("waitpid failed");

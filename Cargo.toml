@@ -7,12 +7,12 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-rustyline = "6.1"
+rustyline = "10"
 nix = "0.25"
 libc = "0.2"
 
 [dependencies.iced-x86]
-version = "1.0"
+version = "1"
 default-features = false
 # See below for all features
 features = ["std", "decoder", "intel"]
