@@ -88,7 +88,9 @@ impl Tracee {
             },
         );
 
-        ptrace::write(self.pid(), addr as _, int3_data as _).expect("ptrace(POKETEXT) failed.");
+        unsafe {
+            ptrace::write(self.pid(), addr as _, int3_data as _).expect("ptrace(POKETEXT) failed.");
+        }
     }
 
     pub fn restore_breakpoint(&mut self) {
@@ -99,8 +101,10 @@ impl Tracee {
             "restoring breakpoint of non-breakpoint addr {:x}",
             addr
         ));
-        ptrace::write(self.pid(), addr as _, breakpoint.original_data as _)
-            .expect("ptrace(POKETEXT) failed.");
+        unsafe {
+            ptrace::write(self.pid(), addr as _, breakpoint.original_data as _)
+                .expect("ptrace(POKETEXT) failed.");
+        }
         ptrace::setregs(self.pid(), self.regs().clone()).expect("ptrace(SETREGS) failed.");
     }
 }
