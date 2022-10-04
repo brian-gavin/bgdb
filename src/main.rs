@@ -6,5 +6,5 @@ fn main() {
     if args.len() < 2 {
         panic!("Expected 2 args for debug target");
     }
-    run(Tracee::new(&args[1]).unwrap());
+    run(Tracee::start(&args[1]).unwrap());
 }

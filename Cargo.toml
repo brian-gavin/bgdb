@@ -10,6 +10,9 @@ edition = "2018"
 rustyline = "10"
 nix = "0.25"
 libc = "0.2"
+gimli = "0.26"
+object = "0.29"
+memmap2 = "0.5"
 
 [dependencies.iced-x86]
 version = "1"

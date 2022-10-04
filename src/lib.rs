@@ -15,6 +15,7 @@ mod arch {
     pub const BITNESS: u32 = 32;
 }
 
+mod dwarf;
 mod repl;
 pub mod tracee;
 
