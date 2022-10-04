@@ -15,7 +15,6 @@ mod arch {
     pub const BITNESS: u32 = 32;
 }
 
-mod dwarf;
 mod repl;
 pub mod tracee;
 
@@ -23,6 +22,7 @@ use arch::*;
 use tracee::Tracee;
 
 pub fn run(mut tracee: Tracee) {
+    println!("PID: {}", tracee.pid());
     let mut rl = Editor::<()>::new().unwrap();
     dbg!(BITNESS);
     let mut wait_status = None;

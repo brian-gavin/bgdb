@@ -1,5 +1,8 @@
 use crate::arch::*;
-use gimli::{DW_AT_high_pc, DW_AT_low_pc, DebuggingInformationEntry, Dwarf};
+use gimli::{
+    AttributeValue, DW_AT_high_pc, DW_AT_low_pc, DW_AT_name, DW_TAG_subprogram,
+    DebuggingInformationEntry, Dwarf,
+};
 use libc::user_regs_struct;
 use memmap2::Mmap;
 use nix::{sys::ptrace, unistd::Pid};
@@ -24,18 +27,14 @@ struct Breakpoint {
 
 type DwarfReader = gimli::EndianRcSlice<gimli::RunTimeEndian>;
 
-struct DwarfWrapper {
-    dwarf: gimli::Dwarf<DwarfReader>,
-}
-
 pub struct Tracee {
-    dwarf: DwarfWrapper,
+    dwarf: Dwarf<DwarfReader>,
     child: process::Child,
     regs_cache: RefCell<Option<user_regs_struct>>,
     breakpoints: HashMap<usize, Breakpoint>,
 }
 
-fn read_object_file(program_name: &str) -> Result<DwarfWrapper, Box<dyn Error>> {
+fn read_object_file(program_name: &str) -> Result<Dwarf<DwarfReader>, Box<dyn Error>> {
     let f = File::open(program_name)?;
     let mmap = unsafe { Mmap::map(&f)? };
     let obj = object::File::parse(&*mmap)?;
@@ -61,8 +60,7 @@ fn read_object_file(program_name: &str) -> Result<DwarfWrapper, Box<dyn Error>> 
             .unwrap_or(Cow::Borrowed(&[]));
         Ok(gimli::EndianRcSlice::new(Rc::from(&*data), endian))
     }
-    let dwarf = gimli::Dwarf::load(|id| load_section(id, &obj, endian))?;
-    Ok(DwarfWrapper { dwarf })
+    Ok(gimli::Dwarf::load(|id| load_section(id, &obj, endian))?)
 }
 
 fn start_child(program_name: &str) -> io::Result<process::Child> {
@@ -90,38 +88,6 @@ fn by_pc(pc: u64) -> impl Fn(&DebuggingInformationEntry<DwarfReader>) -> gimli::
         Ok(low_pc <= pc && pc <= high_pc)
     }
 }
-
-impl DwarfWrapper {
-    fn find_die_by_pc_and_parse<FParse, T>(
-        &self,
-        pc: u64,
-        parse: FParse,
-    ) -> gimli::Result<Option<T>>
-    where
-        FParse: Fn(&DebuggingInformationEntry<DwarfReader>) -> gimli::Result<T>,
-    {
-        self.find_die_and_parse(by_pc(pc), parse)
-    }
-
-    fn find_die_and_parse<FBy, FParse, T>(&self, by: FBy, parse: FParse) -> gimli::Result<Option<T>>
-    where
-        FBy: Fn(&DebuggingInformationEntry<DwarfReader>) -> gimli::Result<bool>,
-        FParse: Fn(&DebuggingInformationEntry<DwarfReader>) -> gimli::Result<T>,
-    {
-        let mut it = self.dwarf.units();
-        while let Some(header) = it.next()? {
-            let unit = self.dwarf.unit(header)?;
-            let mut it = unit.entries();
-            while let Some(entry) = it.next_sibling()? {
-                if by(entry)? {
-                    return Ok(Some(parse(entry)?));
-                }
-            }
-        }
-        Ok(None)
-    }
-}
-
 impl Tracee {
     pub fn start(program_name: &str) -> Result<Self, Box<dyn Error>> {
         let tracee = Tracee {
@@ -193,6 +159,34 @@ impl Tracee {
         }
     }
 
+    pub fn insert_breakpoint_function(&mut self, fn_name: &str) -> gimli::Result<()> {
+        let find_by_name = |entry: &DebuggingInformationEntry<_>| {
+            dbg!(entry.tag());
+            Ok(entry.tag() == DW_TAG_subprogram
+                && entry
+                    .attr_value(DW_AT_name)?
+                    .and_then(|s| s.string_value(&self.dwarf.debug_str))
+                    .map(|s| s.as_ref() == fn_name.as_bytes())
+                    .unwrap_or_default())
+        };
+        let parse_pc = |entry: &DebuggingInformationEntry<_>| -> gimli::Result<Option<u64>> {
+            Ok(entry.attr_value(DW_AT_low_pc)?.and_then(|a| {
+                if let AttributeValue::Addr(pc) = a {
+                    Some(pc)
+                } else {
+                    None
+                }
+            }))
+        };
+        let fn_start_pc = match self.find_die_and_parse(find_by_name, parse_pc)? {
+            Some(Some(pc)) => pc,
+            Some(None) => panic!("no PC found on DIE"),
+            None => panic!("no DIE found with name {}", fn_name),
+        };
+        dbg!(format!("0x{:x}", fn_start_pc));
+        Ok(self.insert_breakpoint(fn_start_pc as _))
+    }
+
     pub fn restore_breakpoint(&mut self) {
         // restore pre-breakpoint state
         self.regs_mut().rip -= 1;
@@ -206,5 +200,23 @@ impl Tracee {
                 .expect("ptrace(POKETEXT) failed.");
         }
         ptrace::setregs(self.pid(), self.regs().clone()).expect("ptrace(SETREGS) failed.");
+    }
+
+    fn find_die_and_parse<FBy, FParse, T>(&self, by: FBy, parse: FParse) -> gimli::Result<Option<T>>
+    where
+        FBy: Fn(&DebuggingInformationEntry<DwarfReader>) -> gimli::Result<bool>,
+        FParse: Fn(&DebuggingInformationEntry<DwarfReader>) -> gimli::Result<T>,
+    {
+        let mut it = self.dwarf.units();
+        while let Some(header) = it.next()? {
+            let unit = self.dwarf.unit(header)?;
+            let mut it = unit.entries();
+            while let Some((_, entry)) = it.next_dfs()? {
+                if by(entry)? {
+                    return Ok(Some(parse(entry)?));
+                }
+            }
+        }
+        Ok(None)
     }
 }
