@@ -1,7 +1,7 @@
 use crate::arch::*;
 use gimli::{
-    AttributeValue, DW_AT_high_pc, DW_AT_low_pc, DW_AT_name, DW_TAG_subprogram,
-    DebuggingInformationEntry, Dwarf,
+    AttributeValue, DW_AT_low_pc, DW_AT_name, DW_TAG_subprogram, DebuggingInformationEntry, Dwarf,
+    Unit, UnitOffset,
 };
 use libc::user_regs_struct;
 use memmap2::Mmap;
@@ -75,19 +75,17 @@ fn start_child(program_name: &str) -> io::Result<process::Child> {
     child.spawn()
 }
 
-fn by_pc(pc: u64) -> impl Fn(&DebuggingInformationEntry<DwarfReader>) -> gimli::Result<bool> {
-    move |entry| {
-        let low_pc = entry
-            .attr(DW_AT_low_pc)?
-            .and_then(|a| a.udata_value())
-            .unwrap_or_default();
-        let high_pc = entry
-            .attr(DW_AT_high_pc)?
-            .and_then(|a| a.udata_value())
-            .unwrap_or_default();
-        Ok(low_pc <= pc && pc <= high_pc)
+struct DIEHandle {
+    unit: Unit<DwarfReader>,
+    offset: UnitOffset,
+}
+
+impl DIEHandle {
+    fn get(&self) -> gimli::Result<DebuggingInformationEntry<'_, '_, DwarfReader>> {
+        self.unit.entry(self.offset)
     }
 }
+
 impl Tracee {
     pub fn start(program_name: &str) -> Result<Self, Box<dyn Error>> {
         let tracee = Tracee {
@@ -160,30 +158,26 @@ impl Tracee {
     }
 
     pub fn insert_breakpoint_function(&mut self, fn_name: &str) -> gimli::Result<()> {
-        let find_by_name = |entry: &DebuggingInformationEntry<_>| {
-            dbg!(entry.tag());
-            Ok(entry.tag() == DW_TAG_subprogram
-                && entry
-                    .attr_value(DW_AT_name)?
-                    .and_then(|s| s.string_value(&self.dwarf.debug_str))
-                    .map(|s| s.as_ref() == fn_name.as_bytes())
-                    .unwrap_or_default())
-        };
-        let parse_pc = |entry: &DebuggingInformationEntry<_>| -> gimli::Result<Option<u64>> {
-            Ok(entry.attr_value(DW_AT_low_pc)?.and_then(|a| {
+        let fn_start_pc = self
+            .find_die_by(|entry| {
+                Ok(entry.tag() == DW_TAG_subprogram
+                    && entry
+                        .attr_value(DW_AT_name)?
+                        .and_then(|s| s.string_value(&self.dwarf.debug_str))
+                        .map(|s| s.as_ref() == fn_name.as_bytes())
+                        .unwrap_or_default())
+            })?
+            .unwrap_or_else(|| panic!("no DIE found with name {}", fn_name))
+            .get()?
+            .attr_value(DW_AT_low_pc)?
+            .and_then(|a| {
                 if let AttributeValue::Addr(pc) = a {
                     Some(pc)
                 } else {
                     None
                 }
-            }))
-        };
-        let fn_start_pc = match self.find_die_and_parse(find_by_name, parse_pc)? {
-            Some(Some(pc)) => pc,
-            Some(None) => panic!("no PC found on DIE"),
-            None => panic!("no DIE found with name {}", fn_name),
-        };
-        dbg!(format!("0x{:x}", fn_start_pc));
+            })
+            .unwrap_or_else(|| panic!("no DW_AT_low_pc found on DIE."));
         Ok(self.insert_breakpoint(fn_start_pc as _))
     }
 
@@ -202,19 +196,26 @@ impl Tracee {
         ptrace::setregs(self.pid(), self.regs().clone()).expect("ptrace(SETREGS) failed.");
     }
 
-    fn find_die_and_parse<FBy, FParse, T>(&self, by: FBy, parse: FParse) -> gimli::Result<Option<T>>
+    fn find_die_by<FBy>(&self, by: FBy) -> gimli::Result<Option<DIEHandle>>
     where
         FBy: Fn(&DebuggingInformationEntry<DwarfReader>) -> gimli::Result<bool>,
-        FParse: Fn(&DebuggingInformationEntry<DwarfReader>) -> gimli::Result<T>,
     {
         let mut it = self.dwarf.units();
         while let Some(header) = it.next()? {
             let unit = self.dwarf.unit(header)?;
-            let mut it = unit.entries();
-            while let Some((_, entry)) = it.next_dfs()? {
-                if by(entry)? {
-                    return Ok(Some(parse(entry)?));
+            let offset = {
+                let mut it = unit.entries();
+                let mut offset = None;
+                while let Some((_, entry)) = it.next_dfs()? {
+                    if by(entry)? {
+                        offset.replace(entry.offset());
+                        break;
+                    }
                 }
+                offset
+            };
+            if let Some(offset) = offset {
+                return Ok(Some(DIEHandle { unit, offset }));
             }
         }
         Ok(None)
