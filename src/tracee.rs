@@ -193,7 +193,7 @@ impl Tracee {
             ptrace::write(self.pid(), addr as _, breakpoint.original_data as _)
                 .expect("ptrace(POKETEXT) failed.");
         }
-        ptrace::setregs(self.pid(), self.regs().clone()).expect("ptrace(SETREGS) failed.");
+        ptrace::setregs(self.pid(), *self.regs()).expect("ptrace(SETREGS) failed.");
     }
 
     fn find_die_by<FBy>(&self, by: FBy) -> gimli::Result<Option<DIEHandle>>
@@ -203,6 +203,7 @@ impl Tracee {
         let mut it = self.dwarf.units();
         while let Some(header) = it.next()? {
             let unit = self.dwarf.unit(header)?;
+            // unit has to outlive unit.entries() so need nested block to find offset.
             let offset = {
                 let mut it = unit.entries();
                 let mut offset = None;
